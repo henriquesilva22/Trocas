@@ -1,0 +1,421 @@
+// ============================================================================
+// Troca Segura — Prisma Schema
+// PostgreSQL (Supabase Free Tier)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  CUSTOMER   // Compra e/ou vende
+  TECHNICIAN // Realiza inspeções no Hub físico
+  ADMIN
+}
+
+enum ProductCategory {
+  CELULAR
+  NOTEBOOK
+  MOUSE
+  TECLADO
+  FONE
+  PECA_PC
+  MONITOR
+  ACESSORIO
+  OUTRO
+}
+
+enum ProductCondition {
+  NOVO
+  SEMINOVO
+  USADO_BOM_ESTADO
+  USADO_COM_MARCAS
+  PARA_PECAS
+}
+
+enum ProductStatus {
+  DISPONIVEL
+  EM_NEGOCIACAO
+  RESERVADO
+  VENDIDO
+  REMOVIDO
+}
+
+enum ProposalStatus {
+  PENDENTE
+  ACEITA
+  REJEITADA
+  EXPIRADA
+  CANCELADA
+}
+
+// Máquina de estados oficial da Negotiation.
+// Transições são validadas exclusivamente pelo NegotiationStateMachine
+// (ver backend/src/modules/negotiation/domain).
+enum NegotiationStatus {
+  AGUARDANDO_DROPOFF        // Acordo fechado, vendedor ainda não levou ao Hub
+  EM_CUSTODIA_FISICA        // Produto entregue fisicamente no Hub
+  EM_INSPECAO               // Técnico iniciou a checklist
+  INSPECIONADO_REPROVADO    // Reprovado — fluxo de devolução ao vendedor
+  INSPECIONADO_E_APROVADO   // Aprovado, lacrado, liberado para pagamento
+  PAGAMENTO_PENDENTE        // Cobrança PIX/Cartão gerada, aguardando confirmação
+  PAGAMENTO_CONFIRMADO      // Webhook do gateway confirmou o Split
+  PIN_GERADO                // PIN/QR Code de retirada emitido ao comprador
+  FINALIZADO                // Produto retirado, negociação concluída
+  CANCELADO                 // Cancelada em qualquer ponto anterior ao pagamento
+  EM_DISPUTA                // Contestação aberta (ex: reprovação questionada)
+}
+
+enum PaymentGateway {
+  MERCADO_PAGO
+  ASAAS
+}
+
+enum PaymentStatus {
+  PENDENTE
+  CONFIRMADO
+  FALHOU
+  ESTORNADO
+}
+
+enum MessageContext {
+  PROPOSAL
+  NEGOTIATION
+}
+
+// ============================================================================
+// USER & REPUTATION
+// ============================================================================
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  phone        String?  @unique
+  cpf          String?  @unique
+  passwordHash String
+  avatarUrl    String?
+  role         UserRole @default(CUSTOMER)
+
+  // Id da conta do usuário no gateway de pagamento (ex: collector_id do
+  // Mercado Pago). Necessário para o Split enviar o valor direto ao
+  // vendedor — sem isso, não é possível criar a cobrança de uma venda.
+  paymentGatewayAccountId String?
+
+  // Trust Score (0 a 100), recalculado a cada Review concluída
+  trustScore   Int      @default(50)
+
+  // Banimento administrativo — bloqueia login/novas negociações sem apagar
+  // histórico (produtos, reviews, negociações passadas continuam íntegros).
+  isBanned Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations — Catálogo
+  productsListed Product[]     @relation("SellerProducts")
+  proposalsMade  Proposal[]    @relation("BuyerProposals")
+
+  // Relations — Negociação
+  negotiationsAsBuyer  Negotiation[] @relation("BuyerNegotiations")
+  negotiationsAsSeller Negotiation[] @relation("SellerNegotiations")
+
+  // Relations — Inspeção (somente para role TECHNICIAN)
+  inspectionsPerformed Inspection[] @relation("TechnicianInspections")
+
+  // Relations — Chat
+  messagesSent Message[] @relation("SentMessages")
+
+  // Relations — Reputação
+  reviewsGiven    Review[] @relation("ReviewsGiven")
+  reviewsReceived Review[] @relation("ReviewsReceived")
+
+  // Relations — Administração
+  adminActionsPerformed AdminAuditLog[] @relation("AdminActor")
+
+  @@map("users")
+}
+
+// ============================================================================
+// CATALOG
+// ============================================================================
+
+model Product {
+  id          String           @id @default(uuid())
+  sellerId    String
+  seller      User             @relation("SellerProducts", fields: [sellerId], references: [id])
+
+  title       String
+  description String
+  category    ProductCategory
+  condition   ProductCondition
+  priceAsking Decimal          @db.Decimal(10, 2)
+
+  // URLs de arquivos no Supabase Storage
+  photoUrls   String[]
+
+  status      ProductStatus    @default(DISPONIVEL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  proposals   Proposal[]
+  negotiation Negotiation?
+
+  @@index([status, category])
+  @@map("products")
+}
+
+// Proposta imutável: uma vez criada, seus termos (amount) não podem
+// ser editados — apenas ACEITA/REJEITADA/CANCELADA/EXPIRADA.
+model Proposal {
+  id        String         @id @default(uuid())
+  productId String
+  product   Product        @relation(fields: [productId], references: [id])
+
+  buyerId   String
+  buyer     User           @relation("BuyerProposals", fields: [buyerId], references: [id])
+
+  amount    Decimal        @db.Decimal(10, 2)
+  message   String?
+
+  status    ProposalStatus @default(PENDENTE)
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  negotiation Negotiation?
+
+  @@index([productId, status])
+  @@map("proposals")
+}
+
+// ============================================================================
+// HUB DE INSPEÇÃO (Intermediação Física)
+// ============================================================================
+
+model Hub {
+  id      String @id @default(uuid())
+  name    String
+  address String
+  city    String
+
+  // Coordenadas para Leaflet.js / OpenStreetMap
+  latitude  Float
+  longitude Float
+
+  isActive Boolean @default(true)
+
+  negotiations Negotiation[]
+  inspections  Inspection[]
+
+  @@map("hubs")
+}
+
+// ============================================================================
+// NEGOTIATION (núcleo da máquina de estados)
+// ============================================================================
+
+model Negotiation {
+  id String @id @default(uuid())
+
+  proposalId String   @unique
+  proposal   Proposal @relation(fields: [proposalId], references: [id])
+
+  productId String  @unique
+  product   Product @relation(fields: [productId], references: [id])
+
+  buyerId  String
+  buyer    User   @relation("BuyerNegotiations", fields: [buyerId], references: [id])
+
+  sellerId String
+  seller   User   @relation("SellerNegotiations", fields: [sellerId], references: [id])
+
+  hubId String?
+  hub   Hub?    @relation(fields: [hubId], references: [id])
+
+  amount Decimal @db.Decimal(10, 2)
+
+  status NegotiationStatus @default(AGUARDANDO_DROPOFF)
+
+  // Custódia física — dropoff
+  droppedOffAt DateTime?
+
+  // PIN de retirada (gerado após PAGAMENTO_CONFIRMADO)
+  pickupPin          String?
+  pickupPinExpiresAt DateTime?
+  pickupConfirmedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inspection Inspection?
+  payment    Payment?
+  messages   Message[]
+  reviews    Review[]
+
+  @@index([status])
+  @@map("negotiations")
+}
+
+// ============================================================================
+// INSPECTION (checklist técnico + custódia/prateleira)
+// ============================================================================
+
+model Inspection {
+  id String @id @default(uuid())
+
+  negotiationId String      @unique
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
+
+  hubId String
+  hub   Hub    @relation(fields: [hubId], references: [id])
+
+  technicianId String
+  technician   User   @relation("TechnicianInspections", fields: [technicianId], references: [id])
+
+  // Checklist estruturado (itens, respostas, notas do técnico)
+  checklist Json
+
+  photoUrls String[]
+  videoUrl  String?
+  reportUrl String? // Laudo em PDF (Supabase Storage)
+
+  approved Boolean?
+
+  // Localização física dentro do Hub enquanto aguarda pagamento/retirada
+  shelfLocation String?
+
+  // Código do lacre físico aplicado ao produto aprovado
+  sealCode String?
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@map("inspections")
+}
+
+// ============================================================================
+// PAYMENTS (Split — sem custódia financeira)
+// ============================================================================
+
+model Payment {
+  id String @id @default(uuid())
+
+  negotiationId String      @unique
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
+
+  gateway          PaymentGateway
+  gatewayPaymentId String         @unique
+
+  amount      Decimal @db.Decimal(10, 2)
+  platformFee Decimal @db.Decimal(10, 2)
+
+  // Detalhes do split enviados ao gateway (destino do repasse ao vendedor)
+  splitDetails Json
+
+  status PaymentStatus @default(PENDENTE)
+
+  // Payload bruto do último webhook recebido, guardado para auditoria
+  lastWebhookPayload Json?
+
+  createdAt DateTime  @default(now())
+  paidAt    DateTime?
+
+  @@map("payments")
+}
+
+// ============================================================================
+// CHAT
+// ============================================================================
+
+model Message {
+  id String @id @default(uuid())
+
+  context MessageContext
+
+  negotiationId String?
+  negotiation   Negotiation? @relation(fields: [negotiationId], references: [id])
+
+  senderId String
+  sender   User   @relation("SentMessages", fields: [senderId], references: [id])
+
+  content String
+
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  @@index([negotiationId])
+  @@map("messages")
+}
+
+// ============================================================================
+// REPUTATION
+// ============================================================================
+
+model Review {
+  id String @id @default(uuid())
+
+  negotiationId String
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
+
+  reviewerId String
+  reviewer   User   @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+
+  revieweeId String
+  reviewee   User   @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+
+  rating  Int // 1 a 5
+  comment String?
+
+  createdAt DateTime @default(now())
+
+  // Cada participante avalia o outro uma única vez por negociação
+  @@unique([negotiationId, reviewerId])
+  @@map("reviews")
+}
+
+// ============================================================================
+// ADMIN
+// ============================================================================
+
+enum AdminActionType {
+  RESOLVE_DISPUTE_APPROVE // EM_DISPUTA -> INSPECIONADO_E_APROVADO (retoma o fluxo)
+  RESOLVE_DISPUTE_CANCEL  // EM_DISPUTA -> CANCELADO
+  BAN_USER
+  UNBAN_USER
+  CREATE_HUB
+  UPDATE_HUB
+  DEACTIVATE_HUB
+}
+
+// Trilha de auditoria de toda ação privilegiada — nenhuma ação de admin
+// (banir usuário, resolver disputa, mexer em Hub) acontece sem deixar
+// rastro de quem fez, quando e por quê.
+model AdminAuditLog {
+  id String @id @default(uuid())
+
+  adminId String
+  admin   User   @relation("AdminActor", fields: [adminId], references: [id])
+
+  action AdminActionType
+
+  // Id do recurso afetado (negotiationId, userId ou hubId, dependendo de `action`)
+  targetId String
+
+  reason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([targetId])
+  @@map("admin_audit_logs")
+}
