@@ -68,7 +68,7 @@ próximos módulos, mantendo a mesma convenção.
 
 ## Modelagem de dados
 
-Ver [`prisma/schema.prisma`](prisma/schema.prisma). Destaques:
+Ver [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma). Destaques:
 
 - `NegotiationStatus` é o enum que espelha exatamente o fluxo pedido:
   `AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA → EM_INSPECAO →
@@ -188,6 +188,13 @@ O endpoint de webhook fica em `POST /payments/webhooks/mercado-pago` — em
 dev, exponha com `ngrok`/`cloudflared` para o Mercado Pago conseguir
 notificar sua máquina local.
 
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL apontando pro backend
+npm run dev                  # http://localhost:3001 (3000 é o backend)
+```
+
 ## Próximos passos sugeridos
 
 1. `UsersModule` (auth JWT + hash de senha, incluindo o
@@ -202,8 +209,9 @@ notificar sua máquina local.
 4. `ChatModule` sobre Supabase Realtime (ou Socket.io) por `negotiationId`.
 5. `ReputationModule`: recalcula `trustScore` (0–100) das duas partes ao
    registrar as reviews de `FINALIZADO`.
-6. Frontend PWA em Next.js consumindo a API, o mapa Leaflet com os `Hub`s e
-   um painel simples para o `AdminModule`.
+6. `frontend/` (Next.js + TS + Tailwind, App Router) tem o scaffold básico
+   criado — falta consumir a API, o mapa Leaflet com os `Hub`s e um painel
+   simples para o `AdminModule`.
 7. Rodar `npm install` + `npx tsc --noEmit` de verdade assim que houver
    Node disponível — a revisão desta rodada foi manual (sem Node instalado
    nesta máquina) e, embora cuidadosa, não substitui o compilador.
