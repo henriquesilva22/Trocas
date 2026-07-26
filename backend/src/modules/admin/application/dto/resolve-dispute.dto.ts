@@ -7,10 +7,10 @@ export enum DisputeResolution {
 
 export class ResolveDisputeDto {
   @IsEnum(DisputeResolution)
-  resolution: DisputeResolution;
+  resolution!: DisputeResolution;
 
   // Motivo obrigatório — vira o registro de auditoria da decisão.
   @IsString()
   @MinLength(10)
-  reason: string;
+  reason!: string;
 }

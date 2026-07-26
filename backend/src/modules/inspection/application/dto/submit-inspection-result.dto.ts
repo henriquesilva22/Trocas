@@ -3,11 +3,11 @@ import { InspectionChecklist } from '../../domain/inspection-checklist.types';
 
 export class SubmitInspectionResultDto {
   @IsObject()
-  checklist: InspectionChecklist;
+  checklist!: InspectionChecklist;
 
   @IsArray()
   @IsUrl({}, { each: true })
-  photoUrls: string[];
+  photoUrls!: string[];
 
   @IsOptional()
   @IsUrl()
@@ -20,11 +20,11 @@ export class SubmitInspectionResultDto {
 
 export class ApproveInspectionDto extends SubmitInspectionResultDto {
   @IsUrl()
-  reportUrl: string;
+  reportUrl!: string;
 
   @IsString()
-  shelfLocation: string;
+  shelfLocation!: string;
 
   @IsString()
-  sealCode: string;
+  sealCode!: string;
 }

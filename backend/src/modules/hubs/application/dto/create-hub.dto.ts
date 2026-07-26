@@ -3,19 +3,19 @@ import { IsLatitude, IsLongitude, IsString, MinLength } from 'class-validator';
 export class CreateHubDto {
   @IsString()
   @MinLength(3)
-  name: string;
+  name!: string;
 
   @IsString()
   @MinLength(5)
-  address: string;
+  address!: string;
 
   @IsString()
   @MinLength(2)
-  city: string;
+  city!: string;
 
   @IsLatitude()
-  latitude: number;
+  latitude!: number;
 
   @IsLongitude()
-  longitude: number;
+  longitude!: number;
 }
