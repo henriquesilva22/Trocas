@@ -73,7 +73,7 @@ Ver [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma). Destaques:
 - `NegotiationStatus` é o enum que espelha exatamente o fluxo pedido:
   `AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA → EM_INSPECAO →
   INSPECIONADO_E_APROVADO → PAGAMENTO_PENDENTE → PAGAMENTO_CONFIRMADO →
-  PIN_GERADO → FINALIZADO` (mais os ramais `CANCELADO`/`EM_DISPUTA`/
+  PIN_GERADO → FINALIZADO` (mais os ramais `CANCELADO`/`EM_ANALISE`/
   `INSPECIONADO_REPROVADO`).
 - `Inspection` guarda `technicianId`, `hubId`, `shelfLocation` (prateleira) e
   `sealCode` (lacre) — rastreio completo da custódia física.
@@ -152,11 +152,11 @@ corrigidos:
 
 `AdminModule` (`/admin/*`, restrito a `@Roles('ADMIN')`):
 
-- `GET /admin/negotiations?status=EM_DISPUTA` — dashboard paginado.
+- `GET /admin/negotiations?status=EM_ANALISE` — dashboard paginado.
 - `GET /admin/negotiations/:id` — detalhe completo (produto, comprador,
   vendedor, hub, inspeção, pagamento, reviews).
 - `POST /admin/negotiations/:id/resolve-dispute` — só atua sobre
-  `EM_DISPUTA`, que a máquina de estados só deixa ir para `CANCELADO` ou de
+  `EM_ANALISE`, que a máquina de estados só deixa ir para `CANCELADO` ou de
   volta a `INSPECIONADO_E_APROVADO` (o admin não consegue pular direto para
   `FINALIZADO` sem passar pelo pagamento de novo).
 - `GET /admin/users`, `PATCH /admin/users/:id/ban` /

@@ -1,8 +1,8 @@
 import { IsEnum, IsString, MinLength } from 'class-validator';
 
 export enum DisputeResolution {
-  APROVAR = 'APROVAR', // Retoma o fluxo: EM_DISPUTA -> INSPECIONADO_E_APROVADO
-  CANCELAR = 'CANCELAR', // Encerra a negociação: EM_DISPUTA -> CANCELADO
+  APROVAR = 'APROVAR', // Retoma o fluxo: EM_ANALISE -> INSPECIONADO_E_APROVADO
+  CANCELAR = 'CANCELAR', // Encerra a negociação: EM_ANALISE -> CANCELADO
 }
 
 export class ResolveDisputeDto {

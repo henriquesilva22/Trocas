@@ -72,7 +72,7 @@ enum NegotiationStatus {
   PIN_GERADO                // PIN/QR Code de retirada emitido ao comprador
   FINALIZADO                // Produto retirado, negociação concluída
   CANCELADO                 // Cancelada em qualquer ponto anterior ao pagamento
-  EM_DISPUTA                // Contestação aberta (ex: reprovação questionada)
+  EM_ANALISE                // Contestação aberta (ex: reprovação questionada)
 }
 
 enum PaymentGateway {
@@ -389,8 +389,8 @@ model Review {
 // ============================================================================
 
 enum AdminActionType {
-  RESOLVE_DISPUTE_APPROVE // EM_DISPUTA -> INSPECIONADO_E_APROVADO (retoma o fluxo)
-  RESOLVE_DISPUTE_CANCEL  // EM_DISPUTA -> CANCELADO
+  RESOLVE_DISPUTE_APPROVE // EM_ANALISE -> INSPECIONADO_E_APROVADO (retoma o fluxo)
+  RESOLVE_DISPUTE_CANCEL  // EM_ANALISE -> CANCELADO
   BAN_USER
   UNBAN_USER
   CREATE_HUB

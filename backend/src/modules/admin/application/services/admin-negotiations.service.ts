@@ -25,7 +25,7 @@ export class AdminNegotiationsService {
   }
 
   /**
-   * Só atua sobre negociações em EM_DISPUTA — a máquina de estados
+   * Só atua sobre negociações em EM_ANALISE — a máquina de estados
    * (negotiation-state-machine.ts) só permite dali sair para CANCELADO ou
    * de volta a INSPECIONADO_E_APROVADO, então o admin não consegue, por
    * exemplo, forçar FINALIZADO sem passar pelo pagamento de novo.
@@ -58,7 +58,7 @@ export class AdminNegotiationsService {
       reason: dto.reason,
     });
 
-    this.logger.log(`Admin ${adminId} resolveu disputa ${negotiationId}: EM_DISPUTA -> ${targetStatus}`);
+    this.logger.log(`Admin ${adminId} resolveu disputa ${negotiationId}: EM_ANALISE -> ${targetStatus}`);
 
     return this.negotiationRepository.findDetailedById(negotiationId);
   }
