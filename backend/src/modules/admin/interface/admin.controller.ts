@@ -10,16 +10,14 @@ import { BanUserDto } from '../application/dto/ban-user.dto';
 import { Roles } from '../../../shared/decorators/roles.decorator';
 import { RolesGuard } from '../../../shared/guards/roles.guard';
 import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/current-user.decorator';
-// import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard'; // TODO quando UsersModule existir
+import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard';
 
 /**
  * Todo endpoint aqui é restrito a ADMIN e cada ação de escrita grava uma
- * entrada em AdminAuditLog (via AuditLogService, nos services). Depende do
- * mesmo JwtAuthGuard pendente que os demais módulos — ver comentário nos
- * outros controllers.
+ * entrada em AdminAuditLog (via AuditLogService, nos services).
  */
 @Controller('admin')
-@UseGuards(/* JwtAuthGuard, */ RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 export class AdminController {
   constructor(

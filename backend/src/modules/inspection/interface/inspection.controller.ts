@@ -9,10 +9,10 @@ import {
 import { Roles } from '../../../shared/decorators/roles.decorator';
 import { RolesGuard } from '../../../shared/guards/roles.guard';
 import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/current-user.decorator';
-// import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard'; // TODO quando UsersModule existir
+import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard';
 
 @Controller('negotiations/:negotiationId/inspection')
-@UseGuards(/* JwtAuthGuard, */ RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class InspectionController {
   constructor(private readonly inspectionService: InspectionService) {}
 

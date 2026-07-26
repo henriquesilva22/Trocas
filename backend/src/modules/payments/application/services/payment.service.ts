@@ -16,6 +16,8 @@ export interface PaymentView {
   sellerName: string;
   status: string;
   receiptUrl: string | null;
+  buyerId: string;
+  sellerId: string;
 }
 
 /**
@@ -83,6 +85,8 @@ export class PaymentService {
       sellerName: negotiation.seller.name,
       status: 'PENDENTE',
       receiptUrl: null,
+      buyerId: negotiation.buyerId,
+      sellerId: negotiation.sellerId,
     };
   }
 
@@ -99,6 +103,8 @@ export class PaymentService {
       sellerName: payment.negotiation.seller.name,
       status: payment.status,
       receiptUrl: payment.receiptUrl,
+      buyerId: payment.negotiation.buyerId,
+      sellerId: payment.negotiation.sellerId,
     };
   }
 

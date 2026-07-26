@@ -5,7 +5,7 @@ import { UpdateHubDto } from '../application/dto/update-hub.dto';
 import { Roles } from '../../../shared/decorators/roles.decorator';
 import { RolesGuard } from '../../../shared/guards/roles.guard';
 import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/current-user.decorator';
-// import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard'; // TODO quando UsersModule existir
+import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard';
 
 @Controller('hubs')
 export class HubsController {
@@ -23,14 +23,14 @@ export class HubsController {
   }
 
   @Post()
-  @UseGuards(/* JwtAuthGuard, */ RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   create(@CurrentUser() admin: AuthenticatedUser, @Body() dto: CreateHubDto) {
     return this.hubsService.create(admin.id, dto);
   }
 
   @Patch(':id')
-  @UseGuards(/* JwtAuthGuard, */ RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   update(
     @CurrentUser() admin: AuthenticatedUser,
@@ -41,7 +41,7 @@ export class HubsController {
   }
 
   @Post(':id/deactivate')
-  @UseGuards(/* JwtAuthGuard, */ RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   deactivate(@CurrentUser() admin: AuthenticatedUser, @Param('id') id: string) {
     return this.hubsService.deactivate(admin.id, id);

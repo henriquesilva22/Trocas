@@ -4,7 +4,7 @@ import { SubmitPaymentReceiptDto } from '../application/dto/submit-payment-recei
 import { ConfirmPaymentReceiptDto } from '../application/dto/confirm-payment-receipt.dto';
 import { RolesGuard } from '../../../shared/guards/roles.guard';
 import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/current-user.decorator';
-// import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard'; // TODO quando UsersModule existir
+import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard';
 
 /**
  * Sem @Roles — comprador e vendedor têm o mesmo role (CUSTOMER), a
@@ -12,7 +12,7 @@ import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/curre
  * dentro do PaymentService.
  */
 @Controller('negotiations/:negotiationId/payments')
-@UseGuards(/* JwtAuthGuard, */ RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 

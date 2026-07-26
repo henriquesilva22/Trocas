@@ -35,7 +35,9 @@ backend/src/
 │   ├── decorators/
 │   └── filters/
 └── modules/
-    ├── users/              # cadastro, autenticação, perfil
+    ├── users/              # cadastro, login JWT, perfil (chave PIX)
+    │   ├── application/services/users.service.ts
+    │   └── interface/auth.controller.ts, users.controller.ts, jwt-auth.guard.ts
     ├── reputation/         # Review + recálculo de Trust Score (0-100)
     ├── catalog/            # Product, categorias, fotos (Supabase Storage)
     ├── negotiation/        # Proposal + Negotiation (MÁQUINA DE ESTADOS)
@@ -61,8 +63,8 @@ backend/src/
         └── interface/admin.controller.ts
 ```
 
-`negotiation`, `payments`, `platform-fee`, `inspection`, `hubs`, `admin` e a
-raiz de `shared` (inclusive `shared/audit`) estão implementados; `users`,
+`users`, `negotiation`, `payments`, `platform-fee`, `inspection`, `hubs`,
+`admin` e a raiz de `shared` (inclusive `shared/audit`) estão implementados;
 `catalog`, `chat` e `reputation` já existem no disco como esqueleto pronto
 para os próximos módulos, mantendo a mesma convenção.
 
@@ -170,6 +172,29 @@ corrigidos:
 5. **`hubId` do dropoff sem validação**: chegava via `@Body('hubId')` cru,
    sem DTO. Criado `RegisterDropoffDto` com `@IsString()`.
 
+## Autenticação
+
+`UsersModule` (`backend/src/modules/users/`):
+
+- `POST /auth/register` — cadastro público, sempre cria `role: CUSTOMER`
+  (nunca confia em role vindo do client). Senha com `bcryptjs` (sem
+  compilação nativa, evita repetir os problemas de build do Prisma no
+  Render).
+- `POST /auth/login` — rejeita com mensagem genérica se e-mail ou senha
+  estiverem errados (não revela qual dos dois), e com 403 se `isBanned`.
+  Retorna um JWT (`{ sub: userId, role }`, válido por 7 dias).
+- `GET /users/me` / `PATCH /users/me` — perfil do usuário logado; é onde o
+  vendedor cadastra a própria `pixKey` (sem isso, `PaymentService.
+  initiatePayment` rejeita a negociação com `ConflictException`).
+- `JwtAuthGuard` (`modules/users/interface/jwt-auth.guard.ts`) lê o header
+  `Authorization: Bearer <token>` e popula `req.user` — é o guard que
+  faltava e que todo outro controller já esperava
+  (`@UseGuards(JwtAuthGuard, RolesGuard)`). `UsersModule` é `@Global()`
+  (mesmo padrão do `PrismaModule`) então nenhum outro módulo precisa
+  importá-lo pra usar o guard.
+- Simplificação consciente: o JWT é stateless — não verifica `isBanned`
+  nem se o usuário ainda existe a cada request, só no login.
+
 ## Painel do administrador
 
 `AdminModule` (`/admin/*`, restrito a `@Roles('ADMIN')`):
@@ -206,7 +231,7 @@ domínio só para auditar por eles.
 ```bash
 cd backend
 npm install
-cp .env.example .env   # preencher DATABASE_URL (Supabase), COMPANY_PIX_KEY
+cp .env.example .env   # preencher DATABASE_URL (Supabase), COMPANY_PIX_KEY, JWT_SECRET
 npx prisma migrate dev --name init
 npm run start:dev
 ```
@@ -220,21 +245,24 @@ npm run dev                  # http://localhost:3001 (3000 é o backend)
 
 ## Próximos passos sugeridos
 
-1. `UsersModule` (auth JWT + hash de senha, incluindo o
-   `JwtAuthGuard` que falta para o `RolesGuard` funcionar de ponta a ponta
-   em `inspection`, `hubs` e `admin`) e `CatalogModule` (CRUD de produtos +
-   upload para Supabase Storage).
+1. `CatalogModule` (CRUD de produtos + upload para Supabase Storage) —
+   `UsersModule` (auth JWT) já está pronto.
 2. `NegotiationService`: criar a `Negotiation` a partir de uma `Proposal`
-   `ACEITA` (etapa "Acordo" do fluxo, hoje só coberta pelo repository).
+   `ACEITA` (etapa "Acordo" do fluxo, hoje só coberta pelo repository) — e,
+   com ela, uma forma do usuário comum listar as próprias negociações (hoje
+   só existe `GET /admin/negotiations`; as telas de taxa/pagamento no
+   frontend são acessadas por link direto com o `negotiationId`).
 3. Endpoint de pickup: valida `pickupPin`, transiciona
    `PIN_GERADO → FINALIZADO` e trava a tela para as duas avaliações
    obrigatórias.
 4. `ChatModule` sobre Supabase Realtime (ou Socket.io) por `negotiationId`.
 5. `ReputationModule`: recalcula `trustScore` (0–100) das duas partes ao
    registrar as reviews de `FINALIZADO`.
-6. `frontend/` (Next.js + TS + Tailwind, App Router) tem o scaffold básico
-   criado — falta consumir a API, o mapa Leaflet com os `Hub`s e um painel
-   simples para o `AdminModule`.
-7. Rodar `npm install` + `npx tsc --noEmit` de verdade assim que houver
-   Node disponível — a revisão desta rodada foi manual (sem Node instalado
-   nesta máquina) e, embora cuidadosa, não substitui o compilador.
+6. `frontend/` já tem login/cadastro, perfil (chave PIX), as telas de taxa
+   da plataforma e pagamento do produto, e o painel admin de confirmação de
+   taxas — falta o mapa Leaflet com os `Hub`s e o restante do painel do
+   `AdminModule` (disputas, banimento de usuários).
+7. Rodar `npm install` + `npx tsc --noEmit` / `npx next build` de verdade
+   assim que houver Node disponível — a revisão desta rodada foi manual
+   (sem Node instalado nesta máquina) e, embora cuidadosa, não substitui o
+   compilador.

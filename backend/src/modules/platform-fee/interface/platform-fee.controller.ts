@@ -3,14 +3,14 @@ import { PlatformFeeService } from '../application/services/platform-fee.service
 import { SubmitFeeReceiptDto } from '../application/dto/submit-fee-receipt.dto';
 import { RolesGuard } from '../../../shared/guards/roles.guard';
 import { CurrentUser, AuthenticatedUser } from '../../../shared/decorators/current-user.decorator';
-// import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard'; // TODO quando UsersModule existir
+import { JwtAuthGuard } from '../../users/interface/jwt-auth.guard';
 
 /**
  * Sem @Roles — comprador e vendedor pagam a mesma taxa, cada um enxerga só
  * a própria cobrança (resolvida por payerId dentro do PlatformFeeService).
  */
 @Controller('negotiations/:negotiationId/platform-fee')
-@UseGuards(/* JwtAuthGuard, */ RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PlatformFeeController {
   constructor(private readonly platformFeeService: PlatformFeeService) {}
 

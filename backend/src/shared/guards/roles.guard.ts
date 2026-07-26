@@ -4,9 +4,8 @@ import { UserRole } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 
 /**
- * Só checa o papel do usuário — pressupõe que um guard de autenticação
- * (JwtAuthGuard, a ser implementado no UsersModule) já rodou antes e
- * populou `req.user`. Sem UsersModule ainda, aplique os dois juntos:
+ * Só checa o papel do usuário — pressupõe que o JwtAuthGuard já rodou
+ * antes e populou `req.user`. Sempre aplicado junto:
  * `@UseGuards(JwtAuthGuard, RolesGuard)`.
  */
 @Injectable()
