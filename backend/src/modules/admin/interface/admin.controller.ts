@@ -1,8 +1,10 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AdminNegotiationsService } from '../application/services/admin-negotiations.service';
 import { AdminUsersService } from '../application/services/admin-users.service';
+import { PlatformFeeService } from '../../platform-fee/application/services/platform-fee.service';
 import { ListNegotiationsQueryDto } from '../application/dto/list-negotiations-query.dto';
 import { ListUsersQueryDto } from '../application/dto/list-users-query.dto';
+import { ListPlatformFeesQueryDto } from '../../platform-fee/application/dto/list-platform-fees-query.dto';
 import { ResolveDisputeDto } from '../application/dto/resolve-dispute.dto';
 import { BanUserDto } from '../application/dto/ban-user.dto';
 import { Roles } from '../../../shared/decorators/roles.decorator';
@@ -23,6 +25,7 @@ export class AdminController {
   constructor(
     private readonly negotiationsService: AdminNegotiationsService,
     private readonly usersService: AdminUsersService,
+    private readonly platformFeeService: PlatformFeeService,
   ) {}
 
   @Get('negotiations')
@@ -66,5 +69,18 @@ export class AdminController {
   @Patch('users/:id/unban')
   unbanUser(@CurrentUser() admin: AuthenticatedUser, @Param('id') userId: string) {
     return this.usersService.unban(admin.id, userId);
+  }
+
+  @Get('platform-fees')
+  listPlatformFees(@Query() query: ListPlatformFeesQueryDto) {
+    return this.platformFeeService.list(query);
+  }
+
+  @Post('platform-fees/:chargeId/confirm')
+  confirmPlatformFee(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('chargeId') chargeId: string,
+  ) {
+    return this.platformFeeService.confirmCharge(chargeId, admin.id);
   }
 }

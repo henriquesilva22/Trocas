@@ -11,7 +11,7 @@ const SAFE_USER_SELECT = {
   role: true,
   trustScore: true,
   isBanned: true,
-  paymentGatewayAccountId: true,
+  pixKey: true,
   createdAt: true,
 } satisfies Prisma.UserSelect;
 

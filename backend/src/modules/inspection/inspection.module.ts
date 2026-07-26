@@ -4,8 +4,8 @@ import { InspectionService } from './application/services/inspection.service';
 import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
-  // Importa PaymentsModule para consumir o PaymentChargeService exportado
-  // por ele — é assim que a aprovação da inspeção dispara a geração do PIX.
+  // Importa PaymentsModule para consumir o PaymentService exportado por
+  // ele — é assim que a aprovação da inspeção libera a tela de PIX.
   imports: [PaymentsModule],
   controllers: [InspectionController],
   // InspectionService lida com a persistência do Inspection diretamente via

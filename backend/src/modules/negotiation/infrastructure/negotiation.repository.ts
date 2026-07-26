@@ -9,6 +9,7 @@ const ADMIN_DETAIL_INCLUDE = {
   hub: true,
   inspection: true,
   payment: true,
+  platformFeeCharges: true,
   reviews: true,
 } satisfies Prisma.NegotiationInclude;
 
@@ -18,13 +19,6 @@ export class NegotiationRepository {
 
   findById(id: string) {
     return this.prisma.negotiation.findUniqueOrThrow({ where: { id } });
-  }
-
-  findByPaymentGatewayId(gatewayPaymentId: string) {
-    return this.prisma.negotiation.findFirstOrThrow({
-      where: { payment: { gatewayPaymentId } },
-      include: { payment: true },
-    });
   }
 
   /** Listagem paginada para o painel do administrador, com filtro opcional por status. */

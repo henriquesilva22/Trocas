@@ -62,29 +62,37 @@ enum ProposalStatus {
 // Transições são validadas exclusivamente pelo NegotiationStateMachine
 // (ver backend/src/modules/negotiation/domain).
 enum NegotiationStatus {
-  AGUARDANDO_DROPOFF        // Acordo fechado, vendedor ainda não levou ao Hub
+  AGUARDANDO_PAGAMENTO_TAXA // Acordo fechado, aguardando taxa da plataforma (comprador + vendedor)
+  AGUARDANDO_DROPOFF        // Taxa confirmada, vendedor ainda não levou ao Hub
   EM_CUSTODIA_FISICA        // Produto entregue fisicamente no Hub
   EM_INSPECAO               // Técnico iniciou a checklist
   INSPECIONADO_REPROVADO    // Reprovado — fluxo de devolução ao vendedor
   INSPECIONADO_E_APROVADO   // Aprovado, lacrado, liberado para pagamento
-  PAGAMENTO_PENDENTE        // Cobrança PIX/Cartão gerada, aguardando confirmação
-  PAGAMENTO_CONFIRMADO      // Webhook do gateway confirmou o Split
+  PAGAMENTO_PENDENTE        // Valor + chave PIX do vendedor exibidos, aguardando comprador pagar
+  COMPROVANTE_ENVIADO       // Comprador anexou comprovante, aguardando confirmação do vendedor
+  PAGAMENTO_CONFIRMADO      // Vendedor confirmou recebimento do PIX
   PIN_GERADO                // PIN/QR Code de retirada emitido ao comprador
   FINALIZADO                // Produto retirado, negociação concluída
   CANCELADO                 // Cancelada em qualquer ponto anterior ao pagamento
-  EM_ANALISE                // Contestação aberta (ex: reprovação questionada)
+  EM_ANALISE                // Contestação aberta (ex: reprovação questionada, vendedor diz que não recebeu)
 }
 
-enum PaymentGateway {
-  MERCADO_PAGO
-  ASAAS
+enum PlatformFeePayerRole {
+  BUYER
+  SELLER
+}
+
+enum PlatformFeeStatus {
+  PENDENTE
+  COMPROVANTE_ENVIADO
+  CONFIRMADO
 }
 
 enum PaymentStatus {
   PENDENTE
+  COMPROVANTE_ENVIADO
   CONFIRMADO
-  FALHOU
-  ESTORNADO
+  CONTESTADO
 }
 
 enum MessageContext {
@@ -106,10 +114,9 @@ model User {
   avatarUrl    String?
   role         UserRole @default(CUSTOMER)
 
-  // Id da conta do usuário no gateway de pagamento (ex: collector_id do
-  // Mercado Pago). Necessário para o Split enviar o valor direto ao
-  // vendedor — sem isso, não é possível criar a cobrança de uma venda.
-  paymentGatewayAccountId String?
+  // Chave PIX do vendedor — exibida ao comprador após a inspeção aprovar o
+  // produto, para ele pagar diretamente (sem gateway, sem custódia).
+  pixKey String?
 
   // Trust Score (0 a 100), recalculado a cada Review concluída
   trustScore   Int      @default(50)
@@ -141,6 +148,9 @@ model User {
 
   // Relations — Administração
   adminActionsPerformed AdminAuditLog[] @relation("AdminActor")
+
+  // Relations — Taxa da plataforma (paga tanto como comprador quanto vendedor)
+  platformFeeChargesPaid PlatformFeeCharge[]
 
   @@map("users")
 }
@@ -245,7 +255,7 @@ model Negotiation {
 
   amount Decimal @db.Decimal(10, 2)
 
-  status NegotiationStatus @default(AGUARDANDO_DROPOFF)
+  status NegotiationStatus @default(AGUARDANDO_PAGAMENTO_TAXA)
 
   // Custódia física — dropoff
   droppedOffAt DateTime?
@@ -260,6 +270,7 @@ model Negotiation {
 
   inspection Inspection?
   payment    Payment?
+  platformFeeCharges PlatformFeeCharge[]
   messages   Message[]
   reviews    Review[]
 
@@ -305,7 +316,7 @@ model Inspection {
 }
 
 // ============================================================================
-// PAYMENTS (Split — sem custódia financeira)
+// PAYMENTS (PIX direto comprador -> vendedor — sem custódia, sem gateway)
 // ============================================================================
 
 model Payment {
@@ -314,24 +325,49 @@ model Payment {
   negotiationId String      @unique
   negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
 
-  gateway          PaymentGateway
-  gatewayPaymentId String         @unique
+  amount Decimal @db.Decimal(10, 2)
 
-  amount      Decimal @db.Decimal(10, 2)
-  platformFee Decimal @db.Decimal(10, 2)
+  // Snapshot da chave PIX do vendedor no momento da cobrança — preserva o
+  // histórico mesmo que o vendedor troque a chave depois.
+  sellerPixKey String
 
-  // Detalhes do split enviados ao gateway (destino do repasse ao vendedor)
-  splitDetails Json
+  // Comprovante anexado pelo comprador, aguardando confirmação do vendedor.
+  receiptUrl         String?
+  receiptSubmittedAt DateTime?
 
   status PaymentStatus @default(PENDENTE)
 
-  // Payload bruto do último webhook recebido, guardado para auditoria
-  lastWebhookPayload Json?
-
-  createdAt DateTime  @default(now())
-  paidAt    DateTime?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
 
   @@map("payments")
+}
+
+// Taxa fixa da plataforma (paga por comprador E vendedor, separadamente,
+// direto pra chave PIX da empresa) — cobrada no início da negociação, antes
+// do dropoff no Hub liberar.
+model PlatformFeeCharge {
+  id String @id @default(uuid())
+
+  negotiationId String
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
+
+  payerRole PlatformFeePayerRole
+  payerId   String
+  payer     User                 @relation(fields: [payerId], references: [id])
+
+  amount Decimal @db.Decimal(10, 2)
+
+  receiptUrl         String?
+  receiptSubmittedAt DateTime?
+
+  status PlatformFeeStatus @default(PENDENTE)
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  @@unique([negotiationId, payerRole])
+  @@map("platform_fee_charges")
 }
 
 // ============================================================================
@@ -396,6 +432,7 @@ enum AdminActionType {
   CREATE_HUB
   UPDATE_HUB
   DEACTIVATE_HUB
+  CONFIRM_PLATFORM_FEE
 }
 
 // Trilha de auditoria de toda ação privilegiada — nenhuma ação de admin

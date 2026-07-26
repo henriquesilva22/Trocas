@@ -14,7 +14,7 @@ gratuitas.
 | Storage | Supabase Storage | 1 GB / 2 GB banda |
 | Realtime | Supabase Realtime / Socket.io | Supabase |
 | Mapas | Leaflet.js + OpenStreetMap | — |
-| Pagamento | Mercado Pago / Asaas (Split) | taxa % apenas |
+| Pagamento | PIX manual (sem gateway) — comprovante + confirmação | — |
 
 ## Árvore de diretórios do backend (DDD)
 
@@ -45,12 +45,12 @@ backend/src/
     │   ├── domain/inspection-checklist.types.ts  ← itens obrigatórios do checklist
     │   ├── application/services/inspection.service.ts  ← dropoff/start/approve/reject
     │   └── interface/inspection.controller.ts
-    ├── payments/           # webhooks de gateway, Split, sem custódia
-    │   ├── domain/payment-gateway.port.ts        ← abstração MP/Asaas
-    │   ├── infrastructure/gateways/mercado-pago.gateway.ts
-    │   ├── application/services/payment-webhook.service.ts  ← confirma pagamento (webhook)
-    │   ├── application/services/payment-charge.service.ts   ← gera cobrança (aprovação)
-    │   └── interface/payment-webhook.controller.ts
+    ├── payments/           # PIX direto comprador -> vendedor, sem gateway
+    │   ├── application/services/payment.service.ts  ← initiate/receipt/confirm
+    │   └── interface/payment.controller.ts
+    ├── platform-fee/       # taxa fixa (comprador + vendedor) para a chave PIX da empresa
+    │   ├── application/services/platform-fee.service.ts
+    │   └── interface/platform-fee.controller.ts
     ├── chat/               # mensagens por negociação (Supabase Realtime)
     ├── hubs/               # centros de inspeção físicos (lat/lng p/ Leaflet)
     │   ├── interface/hubs.controller.ts          ← GET público + CRUD ADMIN
@@ -61,60 +61,82 @@ backend/src/
         └── interface/admin.controller.ts
 ```
 
-`negotiation`, `payments`, `inspection`, `hubs`, `admin` e a raiz de
-`shared` (inclusive `shared/audit`) estão implementados; `users`, `catalog`,
-`chat` e `reputation` já existem no disco como esqueleto pronto para os
-próximos módulos, mantendo a mesma convenção.
+`negotiation`, `payments`, `platform-fee`, `inspection`, `hubs`, `admin` e a
+raiz de `shared` (inclusive `shared/audit`) estão implementados; `users`,
+`catalog`, `chat` e `reputation` já existem no disco como esqueleto pronto
+para os próximos módulos, mantendo a mesma convenção.
 
 ## Modelagem de dados
 
 Ver [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma). Destaques:
 
 - `NegotiationStatus` é o enum que espelha exatamente o fluxo pedido:
-  `AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA → EM_INSPECAO →
-  INSPECIONADO_E_APROVADO → PAGAMENTO_PENDENTE → PAGAMENTO_CONFIRMADO →
-  PIN_GERADO → FINALIZADO` (mais os ramais `CANCELADO`/`EM_ANALISE`/
-  `INSPECIONADO_REPROVADO`).
+  `AGUARDANDO_PAGAMENTO_TAXA → AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA →
+  EM_INSPECAO → INSPECIONADO_E_APROVADO → PAGAMENTO_PENDENTE →
+  COMPROVANTE_ENVIADO → PAGAMENTO_CONFIRMADO → PIN_GERADO → FINALIZADO`
+  (mais os ramais `CANCELADO`/`EM_ANALISE`/`INSPECIONADO_REPROVADO`).
 - `Inspection` guarda `technicianId`, `hubId`, `shelfLocation` (prateleira) e
   `sealCode` (lacre) — rastreio completo da custódia física.
-- `Payment` nunca guarda saldo — só o `gatewayPaymentId`, o `splitDetails`
-  (para quem foi o repasse) e o payload bruto do último webhook, para
-  auditoria.
+- `Payment` é o pagamento do produto: PIX direto comprador → vendedor, sem
+  gateway. Guarda um snapshot da `sellerPixKey` no momento da cobrança, o
+  `receiptUrl` do comprovante anexado pelo comprador, e o `status`
+  (`PENDENTE → COMPROVANTE_ENVIADO → CONFIRMADO`, ou `CONTESTADO` se o
+  vendedor disser que não recebeu).
+- `PlatformFeeCharge` é a taxa fixa da plataforma (`PLATFORM_FEE_AMOUNT`),
+  cobrada em duas linhas por negociação (`payerRole` `BUYER`/`SELLER`),
+  pagas direto pra chave PIX da empresa e confirmadas manualmente por um
+  admin — só libera `AGUARDANDO_DROPOFF` quando as duas confirmarem.
 - `Proposal` é imutável: uma vez `ACEITA`, vira 1:1 com `Negotiation`; os
   termos (`amount`) não têm update.
 
-## Máquina de estados + Webhook de pagamento
+## Máquina de estados + Pagamento manual por PIX
 
 `backend/src/modules/negotiation/domain/negotiation-state-machine.ts` define
 `ALLOWED_TRANSITIONS` como mapa fechado — qualquer serviço que tente pular
 etapas (ex: confirmar pagamento antes da inspeção aprovar) recebe
 `InvalidNegotiationTransitionError`.
 
-`payment-webhook.service.ts` (o serviço pedido no item 3) faz:
+Não existe gateway de pagamento — os dois pagamentos do fluxo (taxa da
+plataforma e o valor do produto) são PIX manual: quem paga anexa um
+comprovante (`receiptUrl`), e quem recebe confirma manualmente.
 
-1. Valida a assinatura HMAC do webhook (`x-signature` do Mercado Pago) —
-   descarta qualquer payload não assinado corretamente.
-2. **Nunca confia no corpo do webhook como verdade** — usa o `id` recebido
-   só para consultar a API do gateway e buscar o status real do pagamento.
-3. Dentro de uma transação Prisma, aplica a transição
-   `PAGAMENTO_PENDENTE → PAGAMENTO_CONFIRMADO → PIN_GERADO` de forma
-   **idempotente** (webhooks duplicados não reprocessam) e com guarda de
-   concorrência otimista (`updateMany` filtrando pelo status atual).
-4. Gera o PIN de 6 dígitos de retirada (`pickupPin`) com validade de 72h,
-   que o comprador apresenta no Hub físico.
+**Taxa da plataforma** (`platform-fee.service.ts`), no início da negociação:
+
+1. `getOrCreateCharges`: cria uma cobrança de `PLATFORM_FEE_AMOUNT` pro
+   comprador e outra pro vendedor (`PlatformFeeCharge`, `payerRole`
+   `BUYER`/`SELLER`), ambas pra chave PIX da empresa (`COMPANY_PIX_KEY`).
+2. Cada um anexa o próprio comprovante (`submitReceipt`) — resolvido pelo
+   `payerId` de quem chama, nunca por um campo de role vindo do client.
+3. Um **admin** confirma cada cobrança manualmente (`confirmCharge`,
+   `POST /admin/platform-fees/:chargeId/confirm`) — é dinheiro entrando na
+   empresa, não faz sentido a outra parte confirmar.
+4. Só quando as duas cobranças estiverem `CONFIRMADO` a negociação sai de
+   `AGUARDANDO_PAGAMENTO_TAXA` para `AGUARDANDO_DROPOFF`.
+
+**Pagamento do produto** (`payment.service.ts`), depois da inspeção aprovar:
+
+1. `initiatePayment`: calcula o `amount`, congela um snapshot da
+   `sellerPixKey` do vendedor e move `INSPECIONADO_E_APROVADO →
+   PAGAMENTO_PENDENTE`.
+2. O comprador paga direto pro vendedor e chama `submitReceipt` —
+   `PAGAMENTO_PENDENTE → COMPROVANTE_ENVIADO`.
+3. O **vendedor** confirma (`confirmReceipt`): se recebeu, aplica
+   `COMPROVANTE_ENVIADO → PAGAMENTO_CONFIRMADO → PIN_GERADO` de forma
+   guardada (duas transições persistidas em sequência, `updateMany`
+   filtrando pelo status atual) e gera o PIN de 6 dígitos (`pickupPin`,
+   validade 72h) que o comprador apresenta no Hub; se não recebeu, vai pra
+   `EM_ANALISE`, que o `AdminModule` já resolve (`resolve-dispute`).
 
 `inspection.service.ts` fecha o outro lado do fluxo — o técnico:
 
-1. `registerDropoff`: `AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA`.
+1. `registerDropoff`: `AGUARDANDO_DROPOFF → EM_CUSTODIA_FISICA` (só possível
+   depois que a taxa da plataforma libera esse status).
 2. `startInspection`: cria o registro de `Inspection` e move para
    `EM_INSPECAO`.
 3. `approve`: exige checklist completo e 100% aprovado
    (`inspection-checklist.types.ts`), grava laudo/lacre/prateleira, move
    para `INSPECIONADO_E_APROVADO` e, na sequência, chama
-   `PaymentChargeService.createChargeForNegotiation` — que valida a
-   transição, cria a cobrança PIX com Split no gateway (fora de transação
-   de banco, para não segurar lock esperando a rede) e só então persiste o
-   `Payment` e move para `PAGAMENTO_PENDENTE`.
+   `PaymentService.initiatePayment`.
 4. `reject`: move para `INSPECIONADO_REPROVADO`.
 
 Endpoints do técnico exigem `@Roles('TECHNICIAN')` via `RolesGuard`
@@ -161,6 +183,11 @@ corrigidos:
   `FINALIZADO` sem passar pelo pagamento de novo).
 - `GET /admin/users`, `PATCH /admin/users/:id/ban` /
   `PATCH /admin/users/:id/unban` — moderação, nunca expõe `passwordHash`.
+- `GET /admin/platform-fees?status=COMPROVANTE_ENVIADO` — cobranças de taxa
+  pendentes de confirmação.
+- `POST /admin/platform-fees/:chargeId/confirm` — confirma que a empresa
+  recebeu o PIX da taxa; quando as duas partes (comprador e vendedor) da
+  mesma negociação estiverem confirmadas, libera `AGUARDANDO_DROPOFF`.
 
 Toda ação de escrita grava uma linha em `AdminAuditLog` (quem, quando, ação,
 alvo, motivo) via `AuditLogService`
@@ -179,14 +206,10 @@ domínio só para auditar por eles.
 ```bash
 cd backend
 npm install
-cp .env.example .env   # preencher DATABASE_URL (Supabase), credenciais do MP
+cp .env.example .env   # preencher DATABASE_URL (Supabase), COMPANY_PIX_KEY
 npx prisma migrate dev --name init
 npm run start:dev
 ```
-
-O endpoint de webhook fica em `POST /payments/webhooks/mercado-pago` — em
-dev, exponha com `ngrok`/`cloudflared` para o Mercado Pago conseguir
-notificar sua máquina local.
 
 ```bash
 cd frontend

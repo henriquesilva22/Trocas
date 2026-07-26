@@ -2,7 +2,7 @@ import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../shared/prisma/prisma.service';
 import { assertTransition } from '../../../negotiation/domain/negotiation-state-machine';
-import { PaymentChargeService } from '../../../payments/application/services/payment-charge.service';
+import { PaymentService } from '../../../payments/application/services/payment.service';
 import {
   assertChecklistComplete,
   checklistAllPassed,
@@ -19,7 +19,7 @@ export class InspectionService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly paymentCharge: PaymentChargeService,
+    private readonly paymentService: PaymentService,
   ) {}
 
   /** Vendedor entrega o produto fisicamente no Hub. */
@@ -71,9 +71,9 @@ export class InspectionService {
 
   /**
    * Aprova o item: lacra, sobe o laudo e — na sequência, dentro do mesmo
-   * caso de uso — já dispara a criação da cobrança PIX com Split, movendo
-   * a negociação direto para PAGAMENTO_PENDENTE. O comprador só passa a
-   * ver o PIX depois que o laudo está gravado.
+   * caso de uso — já libera a tela de pagamento (valor + chave PIX do
+   * vendedor), movendo a negociação direto para PAGAMENTO_PENDENTE. O
+   * comprador só passa a ver o PIX depois que o laudo está gravado.
    */
   async approve(negotiationId: string, technicianId: string, dto: ApproveInspectionDto) {
     assertChecklistComplete(dto.checklist);
@@ -119,9 +119,7 @@ export class InspectionService {
 
     this.logger.log(`Negociação ${negotiationId}: EM_INSPECAO -> INSPECIONADO_E_APROVADO`);
 
-    // Fora da transação acima (mesma razão do PaymentChargeService: não
-    // segurar lock de banco esperando a API do gateway responder).
-    return this.paymentCharge.createChargeForNegotiation(negotiationId);
+    return this.paymentService.initiatePayment(negotiationId);
   }
 
   async reject(negotiationId: string, technicianId: string, dto: SubmitInspectionResultDto) {

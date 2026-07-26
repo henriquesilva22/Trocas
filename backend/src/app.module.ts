@@ -6,6 +6,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { InspectionModule } from './modules/inspection/inspection.module';
 import { HubsModule } from './modules/hubs/hubs.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { PlatformFeeModule } from './modules/platform-fee/platform-fee.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { AdminModule } from './modules/admin/admin.module';
     PrismaModule,
     NegotiationModule,
     PaymentsModule,
+    PlatformFeeModule,
     InspectionModule,
     HubsModule,
     AdminModule,
