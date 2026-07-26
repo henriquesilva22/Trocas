@@ -14,6 +14,7 @@ import { JwtAuthGuard } from './interface/jwt-auth.guard';
   imports: [
     ConfigModule,
     JwtModule.registerAsync({
+      global: true, // @Global() no UsersModule não propaga pros imports dele
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
