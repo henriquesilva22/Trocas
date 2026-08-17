@@ -48,6 +48,7 @@ enum ProductStatus {
   EM_NEGOCIACAO
   RESERVADO
   VENDIDO
+  TROCADO
   REMOVIDO
 }
 
@@ -57,6 +58,33 @@ enum ProposalStatus {
   REJEITADA
   EXPIRADA
   CANCELADA
+}
+
+// Quem fez a proposta mais recente na thread — determina quem pode
+// aceitar/recusar: se SELLER (contraproposta), a decisão volta pro buyer.
+enum ProposedBy {
+  BUYER
+  SELLER
+}
+
+enum DeliveryMethod {
+  ENVIO
+  PRESENCIAL
+}
+
+// Como cada lado recebe o item que ganhou na troca, depois da inspeção
+// aprovar — independente de como os itens chegaram ao Hub (DeliveryMethod).
+enum ReceiveMethod {
+  RETIRADA_HUB
+  ENVIO
+}
+
+enum PixKeyType {
+  CPF
+  CNPJ
+  EMAIL
+  TELEFONE
+  ALEATORIA
 }
 
 // Máquina de estados oficial da Negotiation.
@@ -117,7 +145,8 @@ model User {
 
   // Chave PIX do vendedor — exibida ao comprador após a inspeção aprovar o
   // produto, para ele pagar diretamente (sem gateway, sem custódia).
-  pixKey String?
+  pixKey     String?
+  pixKeyType PixKeyType?
 
   // Trust Score (0 a 100), recalculado a cada Review concluída
   trustScore   Int      @default(50)
@@ -153,6 +182,9 @@ model User {
   // Relations — Taxa da plataforma (paga tanto como comprador quanto vendedor)
   platformFeeChargesPaid PlatformFeeCharge[]
 
+  // Relations — Frete (paga quando escolhe receber por envio em vez de retirar no Hub)
+  shippingChargesPaid ShippingCharge[]
+
   @@map("users")
 }
 
@@ -170,34 +202,56 @@ model Product {
   category    ProductCategory
   condition   ProductCondition
   priceAsking Decimal          @db.Decimal(10, 2)
+  city        String
 
   // URLs de arquivos no Supabase Storage
   photoUrls   String[]
+
+  // Categorias que o dono aceita receber em troca (array vazio = aceita
+  // qualquer categoria). Puramente informativo — não bloqueia proposta.
+  acceptedCategories ProductCategory[]
 
   status      ProductStatus    @default(DISPONIVEL)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  proposals   Proposal[]
-  negotiation Negotiation?
+  proposals         Proposal[] @relation("ProposalsForProduct")
+  proposalsOffering Proposal[] @relation("ProposalsOfferingProduct")
+  negotiation        Negotiation? @relation("NegotiationForProduct")
+  negotiationOffered Negotiation? @relation("NegotiationOfferedProduct")
 
   @@index([status, category])
   @@map("products")
 }
 
-// Proposta imutável: uma vez criada, seus termos (amount) não podem
-// ser editados — apenas ACEITA/REJEITADA/CANCELADA/EXPIRADA.
+// Proposta imutável: uma vez criada, seus termos (amount, offeredProductId)
+// não podem ser editados — apenas ACEITA/REJEITADA/CANCELADA/EXPIRADA. Uma
+// contraproposta é uma NOVA linha (ver `respondsTo`), nunca uma edição.
 model Proposal {
   id        String         @id @default(uuid())
   productId String
-  product   Product        @relation(fields: [productId], references: [id])
+  product   Product        @relation("ProposalsForProduct", fields: [productId], references: [id])
 
   buyerId   String
   buyer     User           @relation("BuyerProposals", fields: [buyerId], references: [id])
 
+  // Produto que o comprador está oferecendo em troca. Null = proposta 100%
+  // em dinheiro (compra direta, sem barter).
+  offeredProductId String?
+  offeredProduct   Product? @relation("ProposalsOfferingProduct", fields: [offeredProductId], references: [id])
+
+  // Diferença em dinheiro (pode ser 0 numa troca de valores equivalentes).
   amount    Decimal        @db.Decimal(10, 2)
   message   String?
+
+  // Quem fez esta proposta na thread — BUYER (proposta original) ou SELLER
+  // (contraproposta do dono do produto). Determina quem pode aceitar/recusar.
+  proposedBy ProposedBy    @default(BUYER)
+
+  respondsToId String?
+  respondsTo   Proposal?  @relation("ProposalCounter", fields: [respondsToId], references: [id])
+  counters     Proposal[] @relation("ProposalCounter")
 
   status    ProposalStatus @default(PENDENTE)
 
@@ -224,6 +278,9 @@ model Hub {
   latitude  Float
   longitude Float
 
+  // Texto livre, ex: "09:00 - 18:00"
+  openingHours String?
+
   isActive Boolean @default(true)
 
   negotiations Negotiation[]
@@ -243,7 +300,12 @@ model Negotiation {
   proposal   Proposal @relation(fields: [proposalId], references: [id])
 
   productId String  @unique
-  product   Product @relation(fields: [productId], references: [id])
+  product   Product @relation("NegotiationForProduct", fields: [productId], references: [id])
+
+  // Produto do comprador, quando a proposta aceita foi uma troca (barter).
+  // Null se a proposta aceita foi 100% em dinheiro.
+  offeredProductId String?  @unique
+  offeredProduct   Product? @relation("NegotiationOfferedProduct", fields: [offeredProductId], references: [id])
 
   buyerId  String
   buyer    User   @relation("BuyerNegotiations", fields: [buyerId], references: [id])
@@ -258,6 +320,13 @@ model Negotiation {
 
   status NegotiationStatus @default(AGUARDANDO_PAGAMENTO_TAXA)
 
+  // Escolha de entrega — cada lado escolhe o próprio método/agenda de forma
+  // independente, o dropoff físico em si continua registrado em `droppedOffAt`.
+  buyerDeliveryMethod  DeliveryMethod?
+  buyerScheduledAt     DateTime?
+  sellerDeliveryMethod DeliveryMethod?
+  sellerScheduledAt    DateTime?
+
   // Custódia física — dropoff
   droppedOffAt DateTime?
 
@@ -266,12 +335,23 @@ model Negotiation {
   pickupPinExpiresAt DateTime?
   pickupConfirmedAt  DateTime?
 
+  // Como cada lado recebe o item que ganhou (pós-inspeção aprovada) —
+  // independente de como os itens chegaram ao Hub. `buyerReceivedAt`/
+  // `sellerReceivedAt` marcam entrega física confirmada (por técnico no
+  // caso de RETIRADA_HUB, autodeclarada pelo usuário no caso de ENVIO) —
+  // FINALIZADO só acontece quando os dois lados aplicáveis estão marcados.
+  buyerReceiveMethod  ReceiveMethod?
+  buyerReceivedAt     DateTime?
+  sellerReceiveMethod ReceiveMethod?
+  sellerReceivedAt    DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   inspection Inspection?
   payment    Payment?
   platformFeeCharges PlatformFeeCharge[]
+  shippingCharges    ShippingCharge[]
   messages   Message[]
   reviews    Review[]
 
@@ -371,6 +451,36 @@ model PlatformFeeCharge {
   @@map("platform_fee_charges")
 }
 
+// Frete cobrado de UM lado (o que escolheu ENVIO em vez de retirar no Hub) —
+// mesma forma/fluxo de PlatformFeeCharge (comprovante manual, confirmação),
+// só que o valor é fixo (config `SHIPPING_FLAT_FEE`) e tem código de rastreio.
+model ShippingCharge {
+  id String @id @default(uuid())
+
+  negotiationId String
+  negotiation   Negotiation @relation(fields: [negotiationId], references: [id])
+
+  payerRole PlatformFeePayerRole
+  payerId   String
+  payer     User                 @relation(fields: [payerId], references: [id])
+
+  amount Decimal @db.Decimal(10, 2)
+
+  // Preenchido pelo técnico/admin depois de despachar o item pro Hub de saída.
+  trackingCode String?
+
+  receiptUrl         String?
+  receiptSubmittedAt DateTime?
+
+  status PlatformFeeStatus @default(PENDENTE)
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  @@unique([negotiationId, payerRole])
+  @@map("shipping_charges")
+}
+
 // ============================================================================
 // CHAT
 // ============================================================================
@@ -434,6 +544,8 @@ enum AdminActionType {
   UPDATE_HUB
   DEACTIVATE_HUB
   CONFIRM_PLATFORM_FEE
+  CONFIRM_SHIPPING
+  SET_USER_ROLE
 }
 
 // Trilha de auditoria de toda ação privilegiada — nenhuma ação de admin

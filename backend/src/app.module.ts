@@ -8,20 +8,26 @@ import { HubsModule } from './modules/hubs/hubs.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { PlatformFeeModule } from './modules/platform-fee/platform-fee.module';
 import { UsersModule } from './modules/users/users.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
+import { ShippingModule } from './modules/shipping/shipping.module';
+import { ReputationModule } from './modules/reputation/reputation.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     UsersModule,
+    CatalogModule,
     NegotiationModule,
     PaymentsModule,
     PlatformFeeModule,
+    ShippingModule,
     InspectionModule,
     HubsModule,
     AdminModule,
-    // CatalogModule, ChatModule e ReputationModule seguem o mesmo padrão —
-    // cada um exporta seu repository/service e é importado aqui.
+    ReputationModule,
+    // ChatModule segue o mesmo padrão — exporta seu repository/service e é
+    // importado aqui quando existir.
   ],
 })
 export class AppModule {}

@@ -12,6 +12,7 @@ export interface User {
   avatarUrl: string | null;
   role: 'CUSTOMER' | 'TECHNICIAN' | 'ADMIN';
   pixKey: string | null;
+  pixKeyType: 'CPF' | 'CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA' | null;
   trustScore: number;
   isBanned: boolean;
 }

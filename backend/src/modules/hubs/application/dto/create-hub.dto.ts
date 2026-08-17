@@ -1,4 +1,4 @@
-import { IsLatitude, IsLongitude, IsString, MinLength } from 'class-validator';
+import { IsLatitude, IsLongitude, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateHubDto {
   @IsString()
@@ -18,4 +18,8 @@ export class CreateHubDto {
 
   @IsLongitude()
   longitude!: number;
+
+  @IsOptional()
+  @IsString()
+  openingHours?: string;
 }

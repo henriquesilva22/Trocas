@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { NegotiationStatus } from '@prisma/client';
 import { PrismaService } from '../../../../shared/prisma/prisma.service';
 import { assertTransition } from '../../../negotiation/domain/negotiation-state-machine';
 
@@ -46,6 +47,14 @@ export class PaymentService {
       throw new ConflictException(`Negociação ${negotiationId} já possui um pagamento registrado`);
     }
 
+    const amount = Number(negotiation.amount);
+
+    // Troca sem diferença em dinheiro: não há o que cobrar, pula direto pra
+    // geração do PIN de retirada.
+    if (amount === 0) {
+      return this.skipToPickupPin(negotiationId, negotiation.status);
+    }
+
     assertTransition(negotiation.status, 'PAGAMENTO_PENDENTE');
 
     if (!negotiation.seller.pixKey) {
@@ -53,8 +62,6 @@ export class PaymentService {
         `Vendedor ${negotiation.sellerId} não cadastrou uma chave PIX de recebimento`,
       );
     }
-
-    const amount = Number(negotiation.amount);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.create({
@@ -206,6 +213,49 @@ export class PaymentService {
     this.logger.log(
       `Negociação ${negotiationId}: COMPROVANTE_ENVIADO -> PAGAMENTO_CONFIRMADO -> PIN_GERADO`,
     );
+  }
+
+  /**
+   * Troca sem diferença em dinheiro: não existe cobrança PIX a gerar, então
+   * pula PAGAMENTO_PENDENTE inteiro e libera o PIN de retirada direto.
+   */
+  private async skipToPickupPin(
+    negotiationId: string,
+    fromStatus: NegotiationStatus,
+  ): Promise<PaymentView> {
+    assertTransition(fromStatus, 'PIN_GERADO');
+    const pickupPin = this.generatePickupPin();
+
+    const updated = await this.prisma.negotiation.updateMany({
+      where: { id: negotiationId, status: fromStatus },
+      data: {
+        status: 'PIN_GERADO',
+        pickupPin,
+        pickupPinExpiresAt: new Date(Date.now() + PICKUP_PIN_TTL_HOURS * 60 * 60 * 1000),
+      },
+    });
+    if (updated.count === 0) {
+      throw new ConflictException(`Corrida detectada ao gerar PIN da negociação ${negotiationId}`);
+    }
+
+    this.logger.log(
+      `Negociação ${negotiationId}: INSPECIONADO_E_APROVADO -> PIN_GERADO (sem diferença em dinheiro)`,
+    );
+
+    const negotiation = await this.prisma.negotiation.findUniqueOrThrow({
+      where: { id: negotiationId },
+      include: { seller: true },
+    });
+
+    return {
+      amount: 0,
+      sellerPixKey: negotiation.seller.pixKey ?? '',
+      sellerName: negotiation.seller.name,
+      status: 'CONFIRMADO',
+      receiptUrl: null,
+      buyerId: negotiation.buyerId,
+      sellerId: negotiation.sellerId,
+    };
   }
 
   /** PIN de 6 dígitos apresentado no Hub para retirada. */

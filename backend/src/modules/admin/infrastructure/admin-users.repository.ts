@@ -12,6 +12,7 @@ const SAFE_USER_SELECT = {
   trustScore: true,
   isBanned: true,
   pixKey: true,
+  pixKeyType: true,
   createdAt: true,
 } satisfies Prisma.UserSelect;
 
@@ -43,5 +44,9 @@ export class AdminUsersRepository {
 
   setBanned(id: string, isBanned: boolean) {
     return this.prisma.user.update({ where: { id }, data: { isBanned }, select: SAFE_USER_SELECT });
+  }
+
+  setRole(id: string, role: UserRole) {
+    return this.prisma.user.update({ where: { id }, data: { role }, select: SAFE_USER_SELECT });
   }
 }

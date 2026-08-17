@@ -4,6 +4,7 @@ import { PrismaService } from '../../../shared/prisma/prisma.service';
 
 const ADMIN_DETAIL_INCLUDE = {
   product: true,
+  offeredProduct: true,
   buyer: true,
   seller: true,
   hub: true,
@@ -13,12 +14,30 @@ const ADMIN_DETAIL_INCLUDE = {
   reviews: true,
 } satisfies Prisma.NegotiationInclude;
 
+const LIST_INCLUDE = {
+  product: true,
+  offeredProduct: true,
+} satisfies Prisma.NegotiationInclude;
+
 @Injectable()
 export class NegotiationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   findById(id: string) {
     return this.prisma.negotiation.findUniqueOrThrow({ where: { id } });
+  }
+
+  /** Negociações onde o usuário é comprador OU vendedor — alimenta "Minhas negociações". */
+  findManyForUser(userId: string) {
+    return this.prisma.negotiation.findMany({
+      where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
+      include: LIST_INCLUDE,
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  create(tx: Prisma.TransactionClient, data: Prisma.NegotiationCreateInput) {
+    return tx.negotiation.create({ data, include: ADMIN_DETAIL_INCLUDE });
   }
 
   /** Listagem paginada para o painel do administrador, com filtro opcional por status. */
@@ -47,6 +66,26 @@ export class NegotiationRepository {
     });
   }
 
+  updateDelivery(
+    id: string,
+    data: Pick<
+      Prisma.NegotiationUpdateInput,
+      'buyerDeliveryMethod' | 'buyerScheduledAt' | 'sellerDeliveryMethod' | 'sellerScheduledAt'
+    >,
+  ) {
+    return this.prisma.negotiation.update({ where: { id }, data, include: ADMIN_DETAIL_INCLUDE });
+  }
+
+  updateReceive(
+    id: string,
+    data: Pick<
+      Prisma.NegotiationUpdateInput,
+      'buyerReceiveMethod' | 'buyerReceivedAt' | 'sellerReceiveMethod' | 'sellerReceivedAt' | 'status'
+    >,
+  ) {
+    return this.prisma.negotiation.update({ where: { id }, data, include: ADMIN_DETAIL_INCLUDE });
+  }
+
   /**
    * Atualiza status da negociação dentro de uma transação, usando
    * `updateMany` com filtro no status atual como guarda de concorrência
@@ -67,6 +106,9 @@ export class NegotiationRepository {
   }
 
   withTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(fn);
+    // Default de 5s é curto demais para o encadeamento de updates do fluxo
+    // de aceite de proposta (várias idas e voltas) sobre o pooler remoto do
+    // Supabase — sobrava timeout mesmo sem nada de errado na lógica.
+    return this.prisma.$transaction(fn, { timeout: 15_000 });
   }
 }

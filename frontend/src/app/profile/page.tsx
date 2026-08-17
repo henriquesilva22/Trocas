@@ -4,11 +4,23 @@ import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch, ApiError } from '@/lib/api';
+import { formatCpf, formatPhone } from '@/lib/format';
+
+type PixKeyType = 'CPF' | 'CNPJ' | 'EMAIL' | 'TELEFONE' | 'ALEATORIA';
+
+const PIX_KEY_TYPE_LABEL: Record<PixKeyType, string> = {
+  CPF: 'CPF',
+  CNPJ: 'CNPJ',
+  EMAIL: 'E-mail',
+  TELEFONE: 'Telefone',
+  ALEATORIA: 'Chave aleatória',
+};
 
 export default function ProfilePage() {
   const { user, loading, refreshUser } = useAuth();
   const router = useRouter();
   const [pixKey, setPixKey] = useState('');
+  const [pixKeyType, setPixKeyType] = useState<PixKeyType>('CPF');
   const [phone, setPhone] = useState('');
   const [cpf, setCpf] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -22,8 +34,9 @@ export default function ProfilePage() {
   useEffect(() => {
     if (user) {
       setPixKey(user.pixKey ?? '');
-      setPhone(user.phone ?? '');
-      setCpf(user.cpf ?? '');
+      setPixKeyType(user.pixKeyType ?? 'CPF');
+      setPhone(user.phone ? formatPhone(user.phone) : '');
+      setCpf(user.cpf ? formatCpf(user.cpf) : '');
     }
   }, [user]);
 
@@ -35,7 +48,12 @@ export default function ProfilePage() {
     try {
       await apiFetch('/users/me', {
         method: 'PATCH',
-        body: JSON.stringify({ pixKey: pixKey || undefined, phone: phone || undefined, cpf: cpf || undefined }),
+        body: JSON.stringify({
+          pixKey: pixKey || undefined,
+          pixKeyType: pixKey ? pixKeyType : undefined,
+          phone: phone || undefined,
+          cpf: cpf || undefined,
+        }),
       });
       await refreshUser();
       setSuccess(true);
@@ -56,21 +74,12 @@ export default function ProfilePage() {
       </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="text-sm font-medium">
-          Chave PIX
-          <input
-            type="text"
-            placeholder="CPF, e-mail, telefone ou chave aleatória"
-            value={pixKey}
-            onChange={(e) => setPixKey(e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
-          />
-        </label>
-        <label className="text-sm font-medium">
           Telefone
           <input
             type="text"
+            placeholder="(19) 99999-9999"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => setPhone(formatPhone(e.target.value))}
             className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
           />
         </label>
@@ -78,11 +87,39 @@ export default function ProfilePage() {
           CPF
           <input
             type="text"
+            placeholder="000.000.000-00"
             value={cpf}
-            onChange={(e) => setCpf(e.target.value)}
+            onChange={(e) => setCpf(formatCpf(e.target.value))}
             className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
           />
         </label>
+
+        <fieldset className="text-sm font-medium">
+          <legend>Tipo de chave PIX</legend>
+          <div className="mt-1 flex flex-col gap-1 font-normal">
+            {(Object.keys(PIX_KEY_TYPE_LABEL) as PixKeyType[]).map((type) => (
+              <label key={type} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  checked={pixKeyType === type}
+                  onChange={() => setPixKeyType(type)}
+                />
+                {PIX_KEY_TYPE_LABEL[type]}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <label className="text-sm font-medium">
+          Chave PIX
+          <input
+            type="text"
+            placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"
+            value={pixKey}
+            onChange={(e) => setPixKey(e.target.value)}
+            className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
+          />
+        </label>
+
         {error && <p className="text-sm text-red-600">{error}</p>}
         {success && <p className="text-sm text-green-700">Salvo com sucesso.</p>}
         <button

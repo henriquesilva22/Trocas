@@ -48,3 +48,26 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   }
   return response.json() as Promise<T>;
 }
+
+/** Igual `apiFetch`, mas sem Content-Type fixo — o browser define o boundary do multipart sozinho. */
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    body: formData,
+    headers,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const message = body?.message ?? `Erro ${response.status} ao chamar ${path}`;
+    throw new ApiError(Array.isArray(message) ? message.join(', ') : message, response.status);
+  }
+
+  return response.json() as Promise<T>;
+}

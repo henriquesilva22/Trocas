@@ -11,6 +11,9 @@ import { PrismaService } from '../../../../shared/prisma/prisma.service';
 import { AuditLogService } from '../../../../shared/audit/audit-log.service';
 import { assertTransition } from '../../../negotiation/domain/negotiation-state-machine';
 
+// Admin vê a listagem, mas não precisa (e não deve) ver passwordHash do pagador.
+const SAFE_PAYER_SELECT = { id: true, name: true, email: true } satisfies Prisma.UserSelect;
+
 export interface PlatformFeeInfo {
   companyPixKey: string;
   companyReceiverName: string;
@@ -148,7 +151,7 @@ export class PlatformFeeService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.platformFeeCharge.findMany({
         where,
-        include: { payer: true, negotiation: true },
+        include: { payer: { select: SAFE_PAYER_SELECT }, negotiation: true },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,

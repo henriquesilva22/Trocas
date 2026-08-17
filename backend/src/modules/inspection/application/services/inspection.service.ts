@@ -1,5 +1,5 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { NegotiationStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../shared/prisma/prisma.service';
 import { assertTransition } from '../../../negotiation/domain/negotiation-state-machine';
 import { PaymentService } from '../../../payments/application/services/payment.service';
@@ -7,11 +7,24 @@ import {
   assertChecklistComplete,
   checklistAllPassed,
 } from '../../domain/inspection-checklist.types';
+import { isReceiveComplete } from '../../../negotiation/domain/receive-completion';
 import { StartInspectionDto } from '../dto/start-inspection.dto';
 import {
   ApproveInspectionDto,
   SubmitInspectionResultDto,
 } from '../dto/submit-inspection-result.dto';
+
+const SAFE_PARTY_SELECT = { id: true, name: true } satisfies Prisma.UserSelect;
+
+const QUEUE_INCLUDE = {
+  product: true,
+  offeredProduct: true,
+  buyer: { select: SAFE_PARTY_SELECT },
+  seller: { select: SAFE_PARTY_SELECT },
+  hub: true,
+} satisfies Prisma.NegotiationInclude;
+
+const QUEUE_STATUSES: NegotiationStatus[] = ['EM_CUSTODIA_FISICA', 'EM_INSPECAO'];
 
 @Injectable()
 export class InspectionService {
@@ -21,6 +34,22 @@ export class InspectionService {
     private readonly prisma: PrismaService,
     private readonly paymentService: PaymentService,
   ) {}
+
+  /** Fila de trocas aguardando ou em inspeção — painel do técnico (item 11). */
+  listQueue(hubId?: string) {
+    return this.prisma.negotiation.findMany({
+      where: { status: { in: QUEUE_STATUSES }, ...(hubId ? { hubId } : {}) },
+      include: QUEUE_INCLUDE,
+      orderBy: { droppedOffAt: 'asc' },
+    });
+  }
+
+  getQueueItem(id: string) {
+    return this.prisma.negotiation.findUniqueOrThrow({
+      where: { id },
+      include: { ...QUEUE_INCLUDE, inspection: true },
+    });
+  }
 
   /** Vendedor entrega o produto fisicamente no Hub. */
   async registerDropoff(negotiationId: string, hubId: string): Promise<void> {
@@ -160,5 +189,56 @@ export class InspectionService {
 
     // TODO: publicar evento para o módulo de logística organizar a
     // devolução do produto ao vendedor.
+  }
+
+  /**
+   * Técnico confirma que entregou o item no balcão do Hub pro comprador ou
+   * pro vendedor (item 15) — exige o PIN mostrado pelo usuário. Assim que os
+   * dois lados aplicáveis estiverem confirmados (retirada OU envio
+   * autodeclarado), a negociação vira FINALIZADO.
+   */
+  async confirmHandover(
+    negotiationId: string,
+    technicianId: string,
+    side: 'BUYER' | 'SELLER',
+    pin: string,
+  ) {
+    const negotiation = await this.prisma.negotiation.findUniqueOrThrow({
+      where: { id: negotiationId },
+    });
+
+    if (negotiation.status !== 'PIN_GERADO') {
+      throw new ConflictException(
+        `Negociação ${negotiationId} não está liberada pra retirada (status atual: ${negotiation.status})`,
+      );
+    }
+    if (!negotiation.pickupPin || negotiation.pickupPin !== pin) {
+      throw new ForbiddenException('PIN de retirada incorreto');
+    }
+
+    const receiveMethod = side === 'BUYER' ? negotiation.buyerReceiveMethod : negotiation.sellerReceiveMethod;
+    if (receiveMethod === 'ENVIO') {
+      throw new ConflictException('Este lado escolheu receber por envio, não por retirada no Hub');
+    }
+
+    const updated = await this.prisma.negotiation.update({
+      where: { id: negotiationId },
+      data:
+        side === 'BUYER'
+          ? { buyerReceiveMethod: 'RETIRADA_HUB', buyerReceivedAt: new Date() }
+          : { sellerReceiveMethod: 'RETIRADA_HUB', sellerReceivedAt: new Date() },
+    });
+
+    this.logger.log(`Técnico ${technicianId} confirmou retirada (${side}) da negociação ${negotiationId}`);
+
+    if (isReceiveComplete(updated)) {
+      assertTransition('PIN_GERADO', 'FINALIZADO');
+      return this.prisma.negotiation.update({
+        where: { id: negotiationId },
+        data: { status: 'FINALIZADO' },
+      });
+    }
+
+    return updated;
   }
 }

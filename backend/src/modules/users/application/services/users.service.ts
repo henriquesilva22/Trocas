@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
@@ -16,6 +22,7 @@ const SAFE_USER_SELECT = {
   avatarUrl: true,
   role: true,
   pixKey: true,
+  pixKeyType: true,
   trustScore: true,
   isBanned: true,
   createdAt: true,
@@ -73,6 +80,11 @@ export class UsersService {
   }
 
   updateProfile(id: string, dto: UpdateProfileDto) {
+    // Não presume que toda chave PIX é CPF — quem manda o tipo é o próprio
+    // usuário, então exige os dois juntos (evita gravar chave sem saber o tipo).
+    if (dto.pixKey && !dto.pixKeyType) {
+      throw new BadRequestException('Informe o tipo da chave PIX (pixKeyType) junto com pixKey');
+    }
     return this.prisma.user.update({ where: { id }, data: dto, select: SAFE_USER_SELECT });
   }
 

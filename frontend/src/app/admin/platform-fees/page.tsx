@@ -65,15 +65,15 @@ export default function AdminPlatformFeesPage() {
   }
 
   if (authLoading || !user) {
-    return <main className="mx-auto max-w-2xl px-6 py-16">Carregando...</main>;
+    return <main className="px-8 py-16">Carregando...</main>;
   }
 
   if (user.role !== 'ADMIN') {
-    return <main className="mx-auto max-w-2xl px-6 py-16">Acesso restrito a administradores.</main>;
+    return <main className="px-8 py-16">Acesso restrito a administradores.</main>;
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
+    <main className="px-8 py-10">
       <h1 className="mb-2 text-2xl font-bold">Taxas pendentes de confirmação</h1>
       <p className="mb-6 text-sm text-slate-600">
         Comprovantes enviados pelos usuários, aguardando confirmação de que a empresa recebeu o PIX.

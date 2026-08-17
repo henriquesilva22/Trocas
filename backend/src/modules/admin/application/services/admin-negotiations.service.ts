@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import { AdminActionType, NegotiationStatus } from '@prisma/client';
+import { AdminActionType, NegotiationStatus, PaymentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../shared/prisma/prisma.service';
 import { AuditLogService } from '../../../../shared/audit/audit-log.service';
 import { NegotiationRepository } from '../../../negotiation/infrastructure/negotiation.repository';
@@ -22,6 +22,37 @@ export class AdminNegotiationsService {
 
   getDetail(id: string) {
     return this.negotiationRepository.findDetailedById(id);
+  }
+
+  /**
+   * Visão de admin sobre os pagamentos do PRODUTO (PIX direto comprador ->
+   * vendedor, sem custódia — ver PaymentService). É confirmação peer-to-peer,
+   * o admin não age aqui, só acompanha; item "Pagamentos" do dashboard (21).
+   */
+  async listPayments(params: { status?: PaymentStatus; page: number; pageSize: number }) {
+    const { status, page, pageSize } = params;
+    const where: Prisma.PaymentWhereInput = status ? { status } : {};
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.payment.findMany({
+        where,
+        include: {
+          negotiation: {
+            select: {
+              id: true,
+              buyer: { select: { id: true, name: true } },
+              seller: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.payment.count({ where }),
+    ]);
+
+    return { items, total, page, pageSize };
   }
 
   /**
